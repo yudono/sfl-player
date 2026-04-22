@@ -6,6 +6,8 @@ let lyricsContainer = null;
 let activeIndex = -1;
 let isDragging = false;
 let dragOffset = { x: 0, y: 0 };
+let currentLibraryView = 'root'; // 'root' (playlists) or 'tracks'
+let cachedCSS = ''; // Cache styles for PiP
 
 // Main UI Elements
 const ui = {
@@ -62,6 +64,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (request.command === 'PLAY_PAUSE') simulateControl('playpause');
       if (request.command === 'NEXT') simulateControl('skip-forward');
       if (request.command === 'PREV') simulateControl('skip-back');
+      if (request.command === 'TOGGLE_LYRICS') simulateControl('lyrics');
       if (request.command === 'START_PIP') enterPiP();
     }
   } catch (err) {
@@ -80,6 +83,12 @@ async function initUI() {
       setTimeout(initUI, 1000);
       return;
     }
+
+    // Load CSS for PiP early
+    fetch(safeGetURL('styles.css'))
+      .then(r => r.text())
+      .then(css => cachedCSS = css)
+      .catch(e => console.warn("SFL: Failed to cache CSS", e));
 
     const container = document.createElement('div');
     container.id = 'spotify-floating-lyrics';
@@ -136,6 +145,9 @@ async function initUI() {
           <button class="sfl-ctrl-btn" id="sfl-next" title="Next">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M5 4L15 12L5 20V4ZM17 4V20H19V4H17Z"/></svg>
           </button>
+          <button class="sfl-ctrl-btn" id="sfl-lyrics-toggle" title="Toggle Lyrics (Mic)">
+            <svg data-encore-id="icon" role="img" aria-hidden="true" class="e-10310-icon" viewBox="0 0 16 16" style="width: 16px; height: 16px;"><path d="M13.426 2.574a2.831 2.831 0 0 0-4.797 1.55l3.247 3.247a2.831 2.831 0 0 0 1.55-4.797M10.5 8.118l-2.619-2.62L4.74 9.075 2.065 12.12a1.287 1.287 0 0 0 1.816 1.816l3.06-2.688 3.56-3.129zM7.12 4.094a4.331 4.331 0 1 1 4.786 4.786l-3.974 3.493-3.06 2.689a2.787 2.787 0 0 1-3.933-3.933l2.676-3.045z" fill="currentColor"></path></svg>
+          </button>
         </div>
       </div>
   
@@ -165,31 +177,49 @@ async function initUI() {
 function setupEvents() {
   if (!ui.header || !ui.container) return;
 
-  ui.header.onmousedown = (e) => {
+  const onMouseDown = (e) => {
     isDragging = true;
-    dragOffset.x = e.clientX - ui.container.offsetLeft;
-    dragOffset.y = e.clientY - ui.container.offsetTop;
+    const rect = ui.container.getBoundingClientRect();
+    dragOffset.x = e.clientX - rect.left;
+    dragOffset.y = e.clientY - rect.top;
+    ui.container.classList.add('dragging');
     ui.header.style.cursor = 'grabbing';
+    e.preventDefault(); // Prevent text selection
   };
 
-  document.onmousemove = (e) => {
+  const onMouseMove = (e) => {
     if (!isDragging || !ui.container) return;
-    const x = e.clientX - dragOffset.x;
-    const y = e.clientY - dragOffset.y;
-    ui.container.style.left = x + 'px';
-    ui.container.style.top = y + 'px';
-    ui.container.style.right = 'auto';
+    
+    // Use requestAnimationFrame for smoother dragging
+    requestAnimationFrame(() => {
+      if (!isDragging) return;
+      const x = e.clientX - dragOffset.x;
+      const y = e.clientY - dragOffset.y;
+      ui.container.style.left = x + 'px';
+      ui.container.style.top = y + 'px';
+      ui.container.style.right = 'auto';
+      ui.container.style.bottom = 'auto';
+    });
   };
 
-  document.onmouseup = () => {
-    if (isDragging && ui.container && typeof chrome !== 'undefined' && chrome.storage) {
-      chrome.storage.local.set({
-        sfl_pos: { top: ui.container.style.top, left: ui.container.style.left }
-      });
+  const onMouseUp = () => {
+    if (isDragging && ui.container) {
+      try {
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.runtime?.id) {
+          chrome.storage.local.set({
+            sfl_pos: { top: ui.container.style.top, left: ui.container.style.left }
+          });
+        }
+      } catch (err) {}
     }
     isDragging = false;
+    if (ui.container) ui.container.classList.remove('dragging');
     if (ui.header) ui.header.style.cursor = 'grab';
   };
+
+  ui.header.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
 
   ui.container.querySelector('#sfl-min-btn')?.addEventListener('click', () => {
     ui.container.classList.toggle('minimized');
@@ -204,17 +234,22 @@ function setupEvents() {
   });
 
   ui.container.querySelector('#sfl-back-btn')?.addEventListener('click', () => {
-    ui.container.classList.remove('showing-library');
+    if (currentLibraryView === 'tracks') {
+      refreshLibrary('root');
+    } else {
+      ui.container.classList.remove('showing-library');
+    }
   });
 
   ui.container.querySelector('#sfl-lib-btn')?.addEventListener('click', () => {
-    refreshLibrary();
+    refreshLibrary('root');
     ui.container.classList.add('showing-library');
   });
   
   ui.container.querySelector('#sfl-play')?.addEventListener('click', () => simulateControl('playpause'));
   ui.container.querySelector('#sfl-prev')?.addEventListener('click', () => simulateControl('skip-back'));
   ui.container.querySelector('#sfl-next')?.addEventListener('click', () => simulateControl('skip-forward'));
+  ui.container.querySelector('#sfl-lyrics-toggle')?.addEventListener('click', () => simulateControl('lyrics'));
   ui.container.querySelector('#sfl-pip-btn')?.addEventListener('click', () => enterPiP());
 }
 
@@ -225,64 +260,74 @@ async function enterPiP() {
   }
 
   try {
-    const pipWindow = await window.documentPictureInPicture.requestWindow({ width: 380, height: 500 });
+    const pipWindow = await window.documentPictureInPicture.requestWindow({ width: 380, height: 600 });
     
-    // Move container IMMEDIATELY so user doesn't see a blank screen
+    // 0. Inject Emergency Reset Styles (CRITICAL for non-blank screen)
+    const emergencyStyle = pipWindow.document.createElement('style');
+    emergencyStyle.textContent = `
+      html, body {
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #121212 !important;
+        overflow: hidden !important;
+      }
+      #spotify-floating-lyrics {
+        position: relative !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        display: flex !important;
+        flex-direction: column !important;
+        border: none !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+      }
+    `;
+    pipWindow.document.head.append(emergencyStyle);
+
+    // 1. Inject Cached Extension CSS (The most reliable way)
+    if (cachedCSS) {
+      const mainStyle = pipWindow.document.createElement('style');
+      mainStyle.textContent = cachedCSS;
+      pipWindow.document.head.append(mainStyle);
+    }
+
+    // 2. Fallback: Copy other style sheets if any
+    [...document.styleSheets].forEach(styleSheet => {
+      try {
+        const cssRules = [...styleSheet.cssRules].map(rule => rule.cssText).join('');
+        const newStyle = pipWindow.document.createElement('style');
+        newStyle.textContent = cssRules;
+        pipWindow.document.head.append(newStyle);
+      } catch (e) {
+        if (styleSheet.href && !styleSheet.href.includes('styles.css')) {
+          const link = pipWindow.document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = styleSheet.href;
+          pipWindow.document.head.append(link);
+        }
+      }
+    });
+
+    // Move the container to the PiP window
     pipWindow.document.body.append(ui.container);
     ui.container.classList.add('in-pip');
 
-    // Handle closing
+    // Handle PiP window closing
     pipWindow.addEventListener("pagehide", () => {
       ui.container.classList.remove('in-pip');
       document.body.append(ui.container);
     });
 
-    // INJECT STYLES (Non-blocking)
-    try {
-      // 0. Inject Reset CSS + Emergency Styles for the PiP window
-      const resetStyle = document.createElement('style');
-      resetStyle.textContent = `
-        html, body { 
-          margin: 0 !important; 
-          padding: 0 !important; 
-          background: #121212 !important; 
-          overflow: hidden !important;
-          width: 100vw !important;
-          height: 100vh !important;
-        }
-        /* Emergency styles in case external CSS fails */
-        #spotify-floating-lyrics {
-          position: fixed !important;
-          top: 0 !important;
-          left: 0 !important;
-          width: 100% !important;
-          height: 100% !important;
-          display: flex !important;
-          flex-direction: column !important;
-          color: white !important;
-          font-family: sans-serif;
-        }
-      `;
-      pipWindow.document.head.appendChild(resetStyle);
-
-      // 1. Try simple link first
-      const link = document.createElement('link');
-      link.rel = 'stylesheet';
-      link.href = safeGetURL('styles.css');
-      pipWindow.document.head.appendChild(link);
-
-      // 2. Also try fetching as fallback
-      fetch(safeGetURL('styles.css'))
-        .then(r => r.text())
-        .then(css => {
-          const styleTag = document.createElement('style');
-          styleTag.textContent = css;
-          pipWindow.document.head.appendChild(styleTag);
-        })
-        .catch(e => console.warn("SFL: Fallback style fetch failed", e));
-    } catch (e) {
-      console.warn("SFL: Style injection error", e);
-    }
+    // Mirror drag listeners to the PiP window
+    // This solves the "mouse outside element" issue when dragging in PiP
+    pipWindow.addEventListener('mousemove', (e) => {
+      window.dispatchEvent(new MouseEvent('mousemove', {
+        clientX: e.clientX + pipWindow.screenX,
+        clientY: e.clientY + pipWindow.screenY
+      }));
+    });
   } catch (err) {
     console.error("SFL: PiP error", err);
   }
@@ -290,7 +335,14 @@ async function enterPiP() {
 
 function simulateControl(type) {
   const bar = document.querySelector('[data-testid="now-playing-bar"]');
-  const btn = (bar || document).querySelector(`[data-testid="control-button-${type}"]`);
+  let btn;
+  
+  if (type === 'lyrics') {
+    btn = document.querySelector('[data-testid="lyrics-button"]');
+  } else {
+    btn = (bar || document).querySelector(`[data-testid="control-button-${type}"]`);
+  }
+  
   if (btn) btn.click();
 }
 
@@ -344,48 +396,111 @@ function syncPlaybackState() {
   }
 }
 
-function refreshLibrary() {
+function refreshLibrary(view = 'root') {
   if (!ui.library) return;
+  currentLibraryView = view;
+  
   try {
-    const items = Array.from(document.querySelectorAll('[data-testid="library-item"]'));
-    
-    if (items.length === 0) {
-      ui.library.innerHTML = `<div class="sfl-empty" style="padding: 20px;">Sidebar pustaka tidak ditemukan. Pastikan sidebar Spotify terbuka.</div>`;
-      return;
-    }
+    if (view === 'root') {
+      // SCRAPE PLAYLISTS/ARTISTS FROM SIDEBAR
+      let items = Array.from(document.querySelectorAll('[data-encore-id="listRow"]'));
+      if (items.length === 0) {
+        items = Array.from(document.querySelectorAll('[data-testid="library-item"]'));
+      }
+      
+      if (items.length === 0) {
+        ui.library.innerHTML = `
+          <div class="sfl-empty" style="padding: 20px;">
+            Sidebar pustaka tidak ditemukan.<br>
+            <small style="opacity: 0.7;">Pastikan sidebar Spotify terbuka dalam tampilan list.</small>
+          </div>`;
+        return;
+      }
 
-    ui.library.innerHTML = '';
-    items.forEach(item => {
-      try {
-        const title = item.querySelector('[data-testid="internal-track-link"], [data-testid="item-title"]')?.innerText;
-        const meta = item.querySelector('[data-testid="item-subtitle"]')?.innerText;
-        const img = item.querySelector('img');
-        const imgSrc = img?.src;
-        const isArtist = meta?.toLowerCase().includes('artist') || meta?.toLowerCase().includes('artis');
+      ui.library.innerHTML = '<div class="sfl-lib-header">Unit Pustaka</div>';
+      items.forEach(item => {
+        try {
+          const title = item.querySelector('[data-encore-id="listRowTitle"], [data-testid="internal-track-link"], [data-testid="item-title"]')?.innerText;
+          const meta = item.querySelector('[data-encore-id="listRowSubtitle"], [data-testid="item-subtitle"]')?.innerText;
+          const img = item.querySelector('[data-testid="entity-image"], img');
+          const imgSrc = img?.src;
+          const isArtist = meta?.toLowerCase().includes('artist') || meta?.toLowerCase().includes('artis');
 
-        const el = document.createElement('div');
-        el.className = 'sfl-lib-item';
-        el.innerHTML = `
-          <img src="${imgSrc || safeGetURL('placeholder.png')}" class="sfl-lib-img ${isArtist ? 'artist' : ''}">
-          <div class="sfl-lib-info">
-            <div class="sfl-lib-name">${title || 'Tanpa Judul'}</div>
-            <div class="sfl-lib-meta">${meta || ''}</div>
+          const el = document.createElement('div');
+          el.className = 'sfl-lib-item';
+          el.innerHTML = `
+            <img src="${imgSrc || safeGetURL('placeholder.png')}" class="sfl-lib-img ${isArtist ? 'artist' : ''}">
+            <div class="sfl-lib-info">
+              <div class="sfl-lib-name">${title || 'Tanpa Judul'}</div>
+              <div class="sfl-lib-meta">${meta || ''}</div>
+            </div>
+          `;
+
+          el.onclick = () => {
+            const clickTarget = item.querySelector('.e-10310-legacy-list-row__on-click, [role="button"], .e-10310-legacy-list-row__row-button');
+            if (clickTarget) {
+              clickTarget.click();
+              // Loading state
+              ui.library.innerHTML = `<div class="sfl-empty" style="padding: 40px;">Memuat daftar lagu...</div>`;
+              setTimeout(() => refreshLibrary('tracks'), 1200);
+            }
+          };
+
+          ui.library.appendChild(el);
+        } catch (e) { }
+      });
+    } else {
+      // SCRAPE TRACKS FROM MAIN VIEW
+      const trackRows = Array.from(document.querySelectorAll('[data-testid="tracklist-row"]'));
+      const listTitle = document.querySelector('[data-encore-id="adaptiveTitle"]')?.innerText || 
+                        document.querySelector('h1')?.innerText || "Daftar Lagu";
+      
+      if (trackRows.length === 0) {
+        ui.library.innerHTML = `
+          <div class="sfl-empty" style="padding: 20px;">
+            Daftar lagu tidak ditemukan.<br>
+            <small style="opacity: 0.7;">Klik baris playlist di Spotify atau tunggu sebentar.</small>
           </div>
+          <button class="sfl-lib-item" id="sfl-retry-tracks" style="justify-content: center; margin-top: 10px; background: rgba(255,255,255,0.1);">Coba Lagi</button>
         `;
+        ui.library.querySelector('#sfl-retry-tracks')?.addEventListener('click', () => refreshLibrary('tracks'));
+        return;
+      }
 
-        el.onclick = () => {
-          const clickTarget = item.querySelector('[role="button"], .e-10310-legacy-list-row__on-click');
-          if (clickTarget) {
-            clickTarget.click();
-            ui.container.classList.remove('showing-library');
-          }
-        };
+      ui.library.innerHTML = `<div class="sfl-lib-header">${listTitle}</div>`;
+      trackRows.forEach(row => {
+        try {
+          const title = row.querySelector('[data-testid="internal-track-link"]')?.innerText || 
+                        row.querySelector('.lkqOvzjBxm0err2b')?.innerText;
+          const img = row.querySelector('img');
+          const imgSrc = img?.src;
 
-        ui.library.appendChild(el);
-      } catch (e) { /* Skip individual failed items */ }
-    });
+          const el = document.createElement('div');
+          el.className = 'sfl-lib-item track-item';
+          el.innerHTML = `
+            <img src="${imgSrc || safeGetURL('placeholder.png')}" class="sfl-lib-img">
+            <div class="sfl-lib-info">
+              <div class="sfl-lib-name">${title || 'Tanpa Judul'}</div>
+            </div>
+            <div class="sfl-track-play">▶</div>
+          `;
+
+          el.onclick = () => {
+            const playBtn = row.querySelector('.qrR_ZslfmF07R7Kb, [data-testid="play-button"]');
+            if (playBtn) {
+              playBtn.click();
+              // Back to lyrics after playing
+              ui.container.classList.remove('showing-library');
+            }
+          };
+
+          ui.library.appendChild(el);
+        } catch (e) { }
+      });
+    }
   } catch (err) {
     ui.library.innerHTML = `<div class="sfl-empty">Gagal memuat pustaka.</div>`;
+    console.error("SFL Library Error:", err);
   }
 }
 

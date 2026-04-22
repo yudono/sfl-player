@@ -117,6 +117,7 @@ function setupClickHandlers() {
     'sfl-play': () => sendCommand('PLAY_PAUSE'),
     'sfl-prev': () => sendCommand('PREV'),
     'sfl-next': () => sendCommand('NEXT'),
+    'sfl-lyrics-toggle': () => sendCommand('TOGGLE_LYRICS'),
     'sfl-pip-btn': () => sendCommand('START_PIP')
   };
 

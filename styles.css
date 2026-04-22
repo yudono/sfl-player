@@ -126,16 +126,22 @@
 }
 
 .sfl-header {
-  padding: 8px 16px;
+  padding: 10px 16px;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(10px);
   display: flex;
   justify-content: space-between;
   align-items: center;
+  border-bottom: 1px solid var(--glass-border);
   cursor: grab;
-  background: rgba(0, 0, 0, 0.1);
+  user-select: none;
+  border-radius: 12px 12px 0 0;
 }
 
-.sfl-header:active {
-  cursor: grabbing;
+.sfl-logo {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
 }
 
 .sfl-title {
@@ -175,6 +181,7 @@
 .sfl-content {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden; /* Prevent horizontal scroll */
   padding: 24px 16px;
   scroll-behavior: smooth;
 }
@@ -197,6 +204,9 @@
   color: var(--text-secondary);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   transform-origin: left;
+  overflow-wrap: break-word; /* Enable wrapping for long lines */
+  word-wrap: break-word;
+  max-width: 100%;
 }
 
 .sfl-line.active {

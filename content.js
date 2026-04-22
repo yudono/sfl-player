@@ -338,7 +338,7 @@ function syncPlaybackState() {
 
   const label = playBtn.getAttribute('aria-label') || '';
   if (label.toLowerCase().includes('pause')) {
-    icon.setAttribute('d', 'M6 14h4V4H6v10zm8-10v10h4V4h-4z');
+    icon.setAttribute('d', 'M6 19h4V5H6v14zm8-14v14h4V5h-4z');
   } else {
     icon.setAttribute('d', 'M7 20V4L18 12L7 20Z');
   }

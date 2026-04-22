@@ -14,15 +14,18 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Spotify Floating Player"
+    "default_title": "Spotify Floating Player",
+    "default_icon": "logo.png"
   },
   "web_accessible_resources": [
     {
-      "resources": ["placeholder.png", "styles.css"],
+      "resources": ["placeholder.png", "styles.css", "logo.png"],
       "matches": ["*://open.spotify.com/*"]
     }
   ],
   "icons": {
-    "128": "icon.png"
+    "16": "logo.png",
+    "48": "logo.png",
+    "128": "logo.png"
   }
 }

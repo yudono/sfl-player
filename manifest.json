@@ -4,10 +4,10 @@
   "version": "1.2",
   "description": "Floating lyrics and player controls for Spotify and YouTube.",
   "permissions": ["storage"],
-  "host_permissions": ["https://open.spotify.com/*", "https://www.youtube.com/*"],
+  "host_permissions": ["https://open.spotify.com/*", "https://www.youtube.com/*", "https://www.bilibili.tv/*"],
   "content_scripts": [
     {
-      "matches": ["https://open.spotify.com/*", "https://www.youtube.com/*"],
+      "matches": ["https://open.spotify.com/*", "https://www.youtube.com/*", "https://www.bilibili.tv/*"],
       "js": ["content.js"],
       "css": ["styles.css"]
     }
@@ -20,7 +20,7 @@
   "web_accessible_resources": [
     {
       "resources": ["placeholder.png", "styles.css", "logo.png"],
-      "matches": ["*://open.spotify.com/*", "*://www.youtube.com/*"]
+      "matches": ["*://open.spotify.com/*", "*://www.youtube.com/*", "*://www.bilibili.tv/*"]
     }
   ],
   "icons": {

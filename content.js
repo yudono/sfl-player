@@ -4,8 +4,9 @@
 
 const isYouTube = window.location.hostname.includes('youtube.com');
 const isSpotify = window.location.hostname.includes('spotify.com');
-const serviceName = isYouTube ? 'YouTube' : 'Spotify';
-const serviceColor = isYouTube ? '#ff0000' : '#1db954';
+const isBilibili = window.location.hostname.includes('bilibili.tv');
+const serviceName = isYouTube ? 'YouTube' : (isBilibili ? 'Bilibili' : 'Spotify');
+const serviceColor = isYouTube ? '#ff0000' : (isBilibili ? '#00aeec' : '#1db954');
 let lyricsContainer = null;
 let activeIndex = -1;
 let isDragging = false;
@@ -38,18 +39,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   try {
     if (request.type === 'GET_METADATA') {
       const widget = document.querySelector('[data-testid="now-playing-widget"]');
-      const playBtn = document.querySelector('[data-testid="control-button-playpause"]');
-      const label = playBtn?.getAttribute('aria-label') || '';
-      const activeLyricNode = document.querySelector('.sfl-line.active');
+      let title = 'Memuat...';
+      let artist = 'SFL Player';
+      let cover = safeGetURL('placeholder.png');
 
-      // Get info directly from Spotify DOM or our UI
-      const title = ui.container?.querySelector('#sfl-title')?.innerText || 
-                    widget?.querySelector('[data-testid="context-item-info-title"]')?.innerText ||
-                    widget?.querySelector('[data-testid="context-item-link"]')?.innerText;
-      
-      const artist = ui.container?.querySelector('#sfl-artist')?.innerText || 
-                     widget?.querySelector('[data-testid="context-item-info-artist"]')?.innerText ||
-                     widget?.querySelector('[data-testid="context-item-info-subtitles"]')?.innerText;
+      if (isYouTube) {
+        title = document.querySelector('h1.ytd-watch-flexy')?.innerText || document.title;
+        artist = document.querySelector('#upload-info #channel-name a')?.innerText || 'YouTube Video';
+        cover = `https://img.youtube.com/vi/${new URLSearchParams(window.location.search).get('v')}/mqdefault.jpg`;
+      } else if (isBilibili) {
+        title = document.querySelector('.video-info-title-text')?.innerText || 
+                document.querySelector('.bstar-player__main-title-text')?.innerText || 
+                document.title;
+        artist = document.querySelector('.up-name')?.innerText || 'Bilibili Creator';
+        cover = document.querySelector('.bstar-player__main-bg')?.src || 
+                document.querySelector('.video-play__player img')?.src || 
+                safeGetURL('placeholder.png');
+      } else {
+        const widget = document.querySelector('[data-testid="now-playing-widget"]');
+        title = widget?.querySelector('[data-testid="context-item-info-title"]')?.innerText || 
+                widget?.querySelector('[data-testid="context-item-link"]')?.innerText || 'Memuat...';
+        artist = widget?.querySelector('[data-testid="context-item-info-artist"]')?.innerText || 
+                 widget?.querySelector('[data-testid="context-item-info-subtitles"]')?.innerText || 'SFL Player';
+        cover = widget?.querySelector('[data-testid="cover-art-image"]')?.src || safeGetURL('placeholder.png');
+      }
 
       if (!ui.container || !ui.content) {
         sendResponse({
@@ -63,13 +76,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return;
       }
 
-      const cover = ui.container?.querySelector('#sfl-cover')?.src;
+      // Update cover from UI if available
+      const uiCover = ui.container?.querySelector('#sfl-cover')?.src;
+      const finalCover = uiCover || cover;
 
       sendResponse({
-        title: ui.container.querySelector('#sfl-title')?.innerText || 'Memuat...',
-        artist: ui.container.querySelector('#sfl-artist')?.innerText || 'SFL Player',
-        cover: cover,
-        isPlaying: !document.querySelector(isYouTube ? 'video' : '[data-testid="control-button-playpause"]')?.paused,
+        title: ui.container.querySelector('#sfl-title')?.innerText || title,
+        artist: ui.container.querySelector('#sfl-artist')?.innerText || artist,
+        cover: finalCover,
+        isPlaying: !document.querySelector(isYouTube || isBilibili ? 'video' : '[data-testid="control-button-playpause"]')?.paused,
         activeLyric: ui.content.querySelector('.active')?.innerText,
         url: window.location.href
       });
@@ -97,11 +112,21 @@ async function initUI() {
       return;
     }
 
-    // Load CSS for PiP early
+    // Load CSS for PiP
     fetch(safeGetURL('styles.css'))
       .then(r => r.text())
-      .then(css => cachedCSS = css)
-      .catch(e => console.warn("SFL: Failed to cache CSS", e));
+      .then(css => { cachedCSS = css; })
+      .catch(e => {
+        console.warn("SFL: Fetch failed, trying fallback CSS caching", e);
+        // Fallback: Try to find injected CSS in document
+        try {
+          const extensionSheets = Array.from(document.styleSheets).filter(s => s.href && s.href.includes(chrome.runtime.id));
+          if (extensionSheets.length > 0) {
+            // We can't always read cssRules due to COOP/CORS, but worth a shot
+            cachedCSS = Array.from(extensionSheets[0].cssRules).map(r => r.cssText).join('\n');
+          }
+        } catch (err) {}
+      });
 
     const container = document.createElement('div');
     container.id = 'spotify-floating-lyrics';
@@ -120,7 +145,9 @@ async function initUI() {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="${serviceColor}">
             ${isYouTube 
               ? '<path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>' 
-              : '<path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.49 17.3c-.22.34-.67.45-1.01.23-2.82-1.72-6.37-2.11-10.55-1.16-.39.09-.78-.17-.87-.56-.09-.39.17-.78.56-.87 4.57-1.04 8.5-.6 11.64 1.32.34.22.45.67.23 1.04zm1.46-3.26c-.28.45-.87.59-1.32.31-3.23-1.99-8.15-2.57-11.97-1.41-.51.15-1.05-.14-1.2-.65-.15-.51.14-1.05.65-1.2 4.36-1.32 9.79-.67 13.52 1.63.45.27.6.86.32 1.32zm.12-3.41c-3.87-2.3-10.26-2.51-13.98-1.38-.6.18-1.23-.17-1.41-.77-.18-.6.17-1.23.77-1.41 4.27-1.3 11.33-1.04 15.8 1.61.54.32.72 1.02.4 1.56-.32.54-1.02.72-1.58.39z"/>'}
+              : (isBilibili 
+                ? '<path d="M17.869 3L15.01 5.859C14.812 5.71 14.59 5.59 14.353 5.5L16.445 3.408C16.641 3.212 16.641 2.895 16.445 2.699C16.249 2.503 15.932 2.503 15.736 2.699L12.757 5.678C12.474 5.562 12.176 5.5 11.859 5.5C11.542 5.5 11.244 5.562 10.961 5.678L7.982 2.699C7.786 2.503 7.469 2.503 7.273 2.699C7.077 2.895 7.077 3.212 7.273 3.408L9.365 5.5C9.128 5.59 8.906 5.71 8.708 5.859L5.849 3C5.653 2.804 5.336 2.804 5.141 3C4.945 3.196 4.945 3.513 5.141 3.709L8.12 6.688C5.091 6.688 2.645 9.134 2.645 12.163V16.326C2.645 19.355 5.091 21.801 8.12 21.801H15.598C18.627 21.801 21.073 19.355 21.073 16.326V12.163C21.073 9.134 18.627 6.688 15.598 6.688L18.577 3.709C18.773 3.513 18.773 3.196 18.577 3C18.381 2.804 18.064 2.804 17.869 3ZM8.307 10.914C8.91 10.914 9.398 11.402 9.398 12.005V13.821C9.398 14.424 8.91 14.912 8.307 14.912C7.704 14.912 7.216 14.424 7.216 13.821V12.005C7.216 11.402 7.704 10.914 8.307 10.914ZM15.412 10.914C16.015 10.914 16.503 11.402 16.503 12.005V13.821C16.503 14.424 16.015 14.912 15.412 14.912C14.809 14.912 14.321 14.424 14.321 13.821V12.005C14.321 11.402 14.809 10.914 15.412 10.914Z"/>'
+                : '<path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.49 17.3c-.22.34-.67.45-1.01.23-2.82-1.72-6.37-2.11-10.55-1.16-.39.09-.78-.17-.87-.56-.09-.39.17-.78.56-.87 4.57-1.04 8.5-.6 11.64 1.32.34.22.45.67.23 1.04zm1.46-3.26c-.28.45-.87.59-1.32.31-3.23-1.99-8.15-2.57-11.97-1.41-.51.15-1.05-.14-1.2-.65-.15-.51.14-1.05.65-1.2 4.36-1.32 9.79-.67 13.52 1.63.45.27.6.86.32 1.32zm.12-3.41c-3.87-2.3-10.26-2.51-13.98-1.38-.6.18-1.23-.17-1.41-.77-.18-.6.17-1.23.77-1.41 4.27-1.3 11.33-1.04 15.8 1.61.54.32.72 1.02.4 1.56-.32.54-1.02.72-1.58.39z"/>')}
           </svg>
           SFL Player
         </div>
@@ -128,7 +155,7 @@ async function initUI() {
           <button class="sfl-btn" id="sfl-back-btn" title="Back to Player">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
           </button>
-          <button class="sfl-btn" id="sfl-lib-btn" title="Your Library" style="${isYouTube ? 'display:none' : ''}">
+          <button class="sfl-btn" id="sfl-lib-btn" title="Your Library" style="${(isYouTube || isBilibili) ? 'display:none' : ''}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
           </button>
           <button class="sfl-btn" id="sfl-pip-btn" title="Global Floating">
@@ -170,9 +197,11 @@ async function initUI() {
         </div>
       </div>
   
-      <div class="sfl-content" id="sfl-content" class="${isYouTube ? 'yt-mode' : ''}">
+      <div class="sfl-content" id="sfl-content" class="${(isYouTube || isBilibili) ? 'yt-mode' : ''}">
         <div class="sfl-empty">
-          ${isYouTube ? 'Nyalakan subtitle di YouTube (C) untuk melihat di sini.' : 'Buka tampilan lirik di Spotify (🎤) untuk melihat di sini.'}
+          ${isYouTube ? 'Nyalakan subtitle di YouTube (C) untuk melihat di sini.' : 
+           isBilibili ? 'Nyalakan subtitle di Bstation untuk melihat di sini.' : 
+           'Buka tampilan lirik di Spotify (🎤) untuk melihat di sini.'}
         </div>
       </div>
       <div class="sfl-library-view" id="sfl-library">
@@ -333,13 +362,13 @@ async function enterPiP() {
     pipWindow.document.body.append(ui.container);
     ui.container.classList.add('in-pip');
 
-    // YouTube: Move video to PiP window if possible
+    // YouTube / Bilibili: Move video to PiP window if possible
     let originalVideoParent = null;
     let videoElement = null;
     let timeUpdateHandler = null;
 
-    if (isYouTube) {
-      videoElement = document.querySelector('video.html5-main-video');
+    if (isYouTube || isBilibili) {
+      videoElement = document.querySelector(isYouTube ? 'video.html5-main-video' : '#bilibiliPlayer video');
       if (videoElement) {
         originalVideoParent = videoElement.parentNode;
         const videoWrap = pipWindow.document.createElement('div');
@@ -401,6 +430,9 @@ async function enterPiP() {
           const pct = (videoElement.currentTime / videoElement.duration) * 100;
           progress.value = pct || 0;
           updatePlayIcon();
+          
+          // Dynamic accent color for progress bar
+          progress.style.accentColor = serviceColor;
         };
         videoElement.addEventListener('timeupdate', timeUpdateHandler);
 
@@ -441,32 +473,32 @@ async function enterPiP() {
   }
 }
 
-function simulateControl(type) {
+function simulateControl(action) {
   if (isYouTube) {
-    if (type === 'playpause') {
-      const btn = document.querySelector('.ytp-play-button');
-      if (btn) btn.click();
-    } else if (type === 'skip-forward') {
-      const btn = document.querySelector('.ytp-next-button');
-      if (btn) btn.click();
-    } else if (type === 'skip-back') {
-      const btn = document.querySelector('.ytp-prev-button');
-      if (btn) btn.click();
-      else window.history.back();
-    } else if (type === 'lyrics') {
-      const btn = document.querySelector('.ytp-subtitles-button');
-      if (btn) btn.click();
+    if (action === 'playpause') {
+      const video = document.querySelector('video');
+      if (video) video.paused ? video.play() : video.pause();
     }
+    if (action === 'skip-forward') document.querySelector('.ytp-next-button')?.click();
+    if (action === 'skip-back') window.history.back();
+    if (action === 'lyrics') document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c' }));
+    return;
+  }
+
+  if (isBilibili) {
+    if (action === 'playpause') document.querySelector('.player-mobile-state-icon')?.click();
+    if (action === 'skip-forward') document.querySelector('.player-mobile-control-btn-next-episode')?.click();
+    if (action === 'lyrics') document.querySelector('.player-mobile-control-btn-subtitle')?.click();
     return;
   }
 
   const bar = document.querySelector('[data-testid="now-playing-bar"]');
   let btn;
   
-  if (type === 'lyrics') {
+  if (action === 'lyrics') {
     btn = document.querySelector('[data-testid="lyrics-button"]');
   } else {
-    btn = (bar || document).querySelector(`[data-testid="control-button-${type}"]`);
+    btn = (bar || document).querySelector(`[data-testid="control-button-${action}"]`);
   }
   
   if (btn) btn.click();
@@ -500,6 +532,28 @@ function syncMetadata() {
       if (videoId) {
         ui.container.querySelector('#sfl-cover').src = `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
       }
+      return;
+    }
+
+    if (isBilibili) {
+      const titleNode = document.querySelector('.video-info-title-text') || 
+                        document.querySelector('.bstar-player__main-title-text');
+      const artistNode = document.querySelector('.up-name');
+      const coverNode = document.querySelector('.bstar-player__main-bg') || 
+                         document.querySelector('.video-play__player img');
+      
+      const titleEl = ui.container.querySelector('#sfl-title');
+      const artistEl = ui.container.querySelector('#sfl-artist');
+      const coverEl = ui.container.querySelector('#sfl-cover');
+      
+      if (titleNode && titleEl) titleEl.innerText = titleNode.innerText.trim();
+      else if (titleEl) titleEl.innerText = document.title.split('-')[0].trim();
+
+      if (artistNode && artistEl) artistEl.innerText = artistNode.innerText.trim();
+      
+      if (coverNode?.src && coverEl) coverEl.src = coverNode.src;
+
+      syncPlaybackState();
       return;
     }
 
@@ -542,7 +596,7 @@ function syncPlaybackState() {
   if (!ui.container) return;
 
   let isPlaying = false;
-  if (isYouTube) {
+  if (isYouTube || isBilibili) {
     isPlaying = !document.querySelector('video')?.paused;
   } else {
     const playBtn = document.querySelector('[data-testid="control-button-playpause"]');
@@ -677,6 +731,22 @@ function syncLyrics() {
       ui.content.innerHTML = `<div class="sfl-line active">${fullCaption}</div>`;
     } else {
       ui.content.innerHTML = `<div class="sfl-empty">Nyalakan subtitle di YouTube (C) untuk melihat di sini.</div>`;
+    }
+    return;
+  }
+
+  if (isBilibili) {
+    const subtitleGroups = Array.from(document.querySelectorAll('.subtitle-group'));
+    const assSubtitles = Array.from(document.querySelectorAll('.BILI-SUBTITLEX-ASS-dialogue span'));
+    const allSubtitles = [...subtitleGroups, ...assSubtitles];
+    
+    if (allSubtitles.length > 0) {
+      const fullText = allSubtitles.map(g => g.innerText).filter(t => t.trim()).join(' ');
+      if (fullText) {
+        ui.content.innerHTML = `<div class="sfl-line active">${fullText}</div>`;
+      }
+    } else {
+      ui.content.innerHTML = `<div class="sfl-empty">Nyalakan subtitle di Bstation untuk melihat di sini.</div>`;
     }
     return;
   }

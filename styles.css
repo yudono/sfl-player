@@ -151,12 +151,16 @@
 .sfl-title {
   font-size: 13px;
   font-weight: 700;
-  color: var(--text-primary);
+  color: #fff; /* Force white for title regardless of theme */
   display: flex;
   align-items: center;
   gap: 8px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.sfl-logo svg {
+  margin-right: 4px;
 }
 
 .sfl-controls {

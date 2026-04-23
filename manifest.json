@@ -1,26 +1,26 @@
 {
   "manifest_version": 3,
-  "name": "Spotify Floating Lyrics",
-  "version": "1.1",
-  "description": "A premium floating lyrics overlay for Spotify Web Player.",
+  "name": "SFL Player",
+  "version": "1.2",
+  "description": "Floating lyrics and player controls for Spotify and YouTube.",
   "permissions": ["storage"],
-  "host_permissions": ["https://open.spotify.com/*"],
+  "host_permissions": ["https://open.spotify.com/*", "https://www.youtube.com/*"],
   "content_scripts": [
     {
-      "matches": ["https://open.spotify.com/*"],
+      "matches": ["https://open.spotify.com/*", "https://www.youtube.com/*"],
       "js": ["content.js"],
       "css": ["styles.css"]
     }
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Spotify Floating Player",
+    "default_title": "SFL Player",
     "default_icon": "logo.png"
   },
   "web_accessible_resources": [
     {
       "resources": ["placeholder.png", "styles.css", "logo.png"],
-      "matches": ["*://open.spotify.com/*"]
+      "matches": ["*://open.spotify.com/*", "*://www.youtube.com/*"]
     }
   ],
   "icons": {
